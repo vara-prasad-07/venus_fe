@@ -43,6 +43,19 @@ export class RibbonButton extends HTMLElement {
             Logger.warn(`commandData of ${commandName} is undefined`);
             return undefined;
         }
+
+        // Hide all save buttons for viewers
+        const userPermission = localStorage.getItem("currentUserPermission");
+        if (userPermission === "viewer") {
+            if (
+                commandName === "doc.save" ||
+                commandName === "doc.saveToCloud" ||
+                commandName === "doc.saveToFile"
+            ) {
+                return undefined;
+            }
+        }
+
         if (data.toggle) {
             return new RibbonToggleButton(data, size);
         }

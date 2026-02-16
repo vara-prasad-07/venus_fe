@@ -4,6 +4,26 @@
 import type { IApplication, IRouter } from "chili-core";
 import { auth, Logger, projectService } from "chili-core";
 
+// Helper function to refresh editor UI after permission is set
+function refreshEditorUI(app: IApplication) {
+    try {
+        // Access the editor through the app's mainWindow
+        const mainWindow = (app as any).mainWindow;
+        if (
+            mainWindow &&
+            mainWindow._editor &&
+            typeof mainWindow._editor.refreshQuickCommands === "function"
+        ) {
+            Logger.info("[Editor] Refreshing quick commands based on permission");
+            mainWindow._editor.refreshQuickCommands();
+        } else {
+            Logger.warn("[Editor] Could not find editor to refresh commands");
+        }
+    } catch (error) {
+        Logger.error("[Editor] Failed to refresh UI:", error);
+    }
+}
+
 export async function renderEditor(app: IApplication, _router: IRouter): Promise<void> {
     // Read session ID from URL first, then fall back to localStorage
     const urlParams = new URLSearchParams(window.location.search);
@@ -67,6 +87,12 @@ export async function renderEditor(app: IApplication, _router: IRouter): Promise
                         // Store project name and owner ID for display and saving
                         localStorage.setItem("currentProjectName", project.projectName);
                         localStorage.setItem("currentProjectOwnerId", share.sharedBy);
+                        // Store user's permission level for this project
+                        localStorage.setItem("currentUserPermission", share.permission);
+                        Logger.info(`User permission for this project: ${share.permission}`);
+
+                        // Refresh UI to reflect permission changes
+                        refreshEditorUI(app);
                     } else {
                         Logger.error("Failed to load project info from owner");
                     }
@@ -78,6 +104,11 @@ export async function renderEditor(app: IApplication, _router: IRouter): Promise
                 projectOwnerId = project.userId || user.uid; // Fallback to current user if userId is missing
                 localStorage.setItem("currentProjectName", project.projectName);
                 localStorage.setItem("currentProjectOwnerId", projectOwnerId);
+                // Owner has full editor permissions
+                localStorage.setItem("currentUserPermission", "owner");
+
+                // Refresh UI to reflect permission changes
+                refreshEditorUI(app);
 
                 // Debug log
                 console.log("Setting ownerId in localStorage:", projectOwnerId);

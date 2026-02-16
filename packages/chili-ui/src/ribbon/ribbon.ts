@@ -68,6 +68,14 @@ export const QuickButton = (command: ICommand) => {
         return span({ textContent: "null" });
     }
 
+    // Hide all save buttons for viewers
+    const userPermission = localStorage.getItem("currentUserPermission");
+    if (userPermission === "viewer") {
+        if (data.key === "doc.save" || data.key === "doc.saveToCloud" || data.key === "doc.saveToFile") {
+            return span({ style: { display: "none" } });
+        }
+    }
+
     return svg({
         icon: data.icon,
         title: new Localize(`command.${data.key}`),
@@ -240,13 +248,17 @@ export class Ribbon extends HTMLElement {
             }),
         );
 
-        // Add Share button
-        const shareButton = div({
-            className: style.shareButton,
-            title: "Share Project",
-            textContent: "Share",
-            onclick: () => PubSub.default.pub("openShareDialog", true),
-        });
+        // Add Share button (only for project owners)
+        const userPermission = localStorage.getItem("currentUserPermission");
+        const shareButton =
+            userPermission === "owner" || !userPermission
+                ? div({
+                      className: style.shareButton,
+                      title: "Share Project",
+                      textContent: "Share",
+                      onclick: () => PubSub.default.pub("openShareDialog", true),
+                  })
+                : undefined;
 
         // Add Chat button
         const chatButton = div({
@@ -261,7 +273,11 @@ export class Ribbon extends HTMLElement {
         // Add Presence Indicators (will be populated by editor)
         const presenceContainer = div({ id: "presence-indicators", className: style.presenceContainer });
 
-        return div({ className: style.right }, shareButton, chatButton, presenceContainer, layoutToggles);
+        // Build right panel elements, filtering out undefined (for non-owners)
+        const elements = [shareButton, chatButton, presenceContainer, layoutToggles].filter(
+            (el) => el !== undefined,
+        );
+        return div({ className: style.right }, ...elements);
     }
 
     private ribbonTabs() {

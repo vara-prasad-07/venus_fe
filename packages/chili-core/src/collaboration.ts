@@ -71,6 +71,7 @@ export interface AccessRequest {
     requesterEmail: string;
     requesterName: string;
     ownerId: string;
+    requestedRole: PermissionLevel; // The role the user is requesting
     status: AccessRequestStatus;
     message?: string;
     requestedAt: any;
@@ -421,7 +422,27 @@ export const shareService = {
         const q = query(sharesRef, where("projectId", "==", projectId), where("status", "==", "accepted"));
         const snapshot = await getDocs(q);
 
-        return snapshot.docs.map((doc) => doc.data()) as ProjectShare[];
+        const shares = snapshot.docs.map(
+            (doc) =>
+                ({
+                    id: doc.id,
+                    ...doc.data(),
+                }) as unknown as ProjectShare,
+        );
+
+        // Remove duplicates based on sharedWith email (keep the most recent one)
+        const uniqueShares = new Map<string, ProjectShare>();
+        for (const share of shares) {
+            const existing = uniqueShares.get(share.sharedWith);
+            const shareTime = share.sharedAt?.toMillis?.() || 0;
+            const existingTime = existing?.sharedAt?.toMillis?.() || 0;
+
+            if (!existing || shareTime > existingTime) {
+                uniqueShares.set(share.sharedWith, share);
+            }
+        }
+
+        return Array.from(uniqueShares.values());
     },
 
     async acceptProjectInvitation(invitationId: string): Promise<void> {
@@ -559,9 +580,28 @@ export const shareService = {
 // ─── Access Request Service ─────────────────────────────────────────────────
 
 export const accessRequestService = {
-    async requestAccess(projectId: string, ownerId: string, message?: string): Promise<void> {
+    async requestAccess(
+        projectId: string,
+        ownerId: string,
+        requestedRole: PermissionLevel = "editor",
+        message?: string,
+    ): Promise<void> {
         const user = auth.currentUser;
         if (!user) throw new Error("User not authenticated");
+
+        // Check for existing pending request from this user for this project
+        const requestsRef = collection(db, "accessRequests");
+        const existingRequestQuery = query(
+            requestsRef,
+            where("projectId", "==", projectId),
+            where("requesterId", "==", user.uid),
+            where("status", "==", "pending"),
+        );
+        const existingRequests = await getDocs(existingRequestQuery);
+
+        if (!existingRequests.empty) {
+            throw new Error("You already have a pending access request for this project");
+        }
 
         const requestData: any = {
             projectId,
@@ -569,6 +609,7 @@ export const accessRequestService = {
             requesterEmail: user.email!,
             requesterName: user.displayName || user.email!.split("@")[0],
             ownerId,
+            requestedRole,
             status: "pending",
             requestedAt: serverTimestamp(),
         };
@@ -584,7 +625,7 @@ export const accessRequestService = {
         await notificationService.create(ownerId, {
             type: "access_request",
             title: "Access Request",
-            message: `${user.email} requested access to your project`,
+            message: `${user.email} requested ${requestedRole} access to your project`,
             link: `/dashboard?tab=requests`,
         });
     },
@@ -600,7 +641,7 @@ export const accessRequestService = {
         return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })) as AccessRequest[];
     },
 
-    async approveRequest(requestId: string, permission: PermissionLevel): Promise<void> {
+    async approveRequest(requestId: string): Promise<void> {
         const requestRef = doc(db, "accessRequests", requestId);
         const request = await getDoc(requestRef);
         if (!request.exists()) throw new Error("Request not found");
@@ -608,10 +649,42 @@ export const accessRequestService = {
         const requestData = request.data() as AccessRequest;
 
         try {
-            // Share the project
-            console.log("Sharing project with requester...");
-            await shareService.shareProject(requestData.projectId, requestData.requesterEmail, permission);
-            console.log("Project shared successfully");
+            // Add user as collaborator directly (they already requested access)
+            console.log(`Adding requester as collaborator with ${requestData.requestedRole} role...`);
+            const { projectCollaboratorService } = await import("./firebase");
+
+            // Get project owner info
+            const projectRef = doc(db, "projects", requestData.projectId);
+            const projectSnap = await getDoc(projectRef);
+            if (!projectSnap.exists()) throw new Error("Project not found");
+            const projectData = projectSnap.data();
+            const ownerId = projectData.userId;
+
+            // Add collaborator to the project
+            const collaboratorRole =
+                requestData.requestedRole === "commenter" ? "viewer" : requestData.requestedRole;
+            await projectCollaboratorService.addCollaborator(
+                requestData.projectId,
+                ownerId,
+                requestData.requesterId,
+                requestData.requesterEmail,
+                requestData.requesterName,
+                collaboratorRole as "owner" | "editor" | "viewer",
+            );
+            console.log("Collaborator added successfully");
+
+            // Create project share record
+            console.log("Creating project share record...");
+            await addDoc(collection(db, "projectShares"), {
+                projectId: requestData.projectId,
+                sharedBy: ownerId,
+                ownerEmail: projectData.userEmail || "",
+                sharedWith: requestData.requesterEmail,
+                permission: requestData.requestedRole,
+                status: "accepted",
+                sharedAt: serverTimestamp(),
+            });
+            console.log("Project share created successfully");
 
             // Update request status
             console.log("Updating request status...");
@@ -623,10 +696,11 @@ export const accessRequestService = {
 
             // Notify requester
             console.log("Sending notification to requester...");
+            const roleLabel = requestData.requestedRole === "viewer" ? "Viewer" : "Editor";
             await notificationService.create(requestData.requesterId, {
                 type: "access_request",
                 title: "Access Granted",
-                message: "Your access request has been approved",
+                message: `Your access request has been approved as ${roleLabel}`,
                 link: `/editor?sessionId=${requestData.projectId}`,
             });
             console.log("Notification sent successfully");

@@ -557,13 +557,24 @@ export const projectCollaboratorService = {
         const collaboratorsRef = collection(db, "users", ownerId, "projects", sessionId, "collaborators");
         const snapshot = await getDocs(collaboratorsRef);
 
-        return snapshot.docs.map((docSnap) => {
+        const collaborators = snapshot.docs.map((docSnap) => {
             const data = docSnap.data();
             return {
                 ...data,
                 addedAt: data.addedAt?.toDate?.() ?? new Date(),
             } as ProjectCollaborator;
         });
+
+        // Remove duplicates based on email (keep the most recent one)
+        const uniqueCollaborators = new Map<string, ProjectCollaborator>();
+        for (const collab of collaborators) {
+            const existing = uniqueCollaborators.get(collab.email);
+            if (!existing || collab.addedAt > existing.addedAt) {
+                uniqueCollaborators.set(collab.email, collab);
+            }
+        }
+
+        return Array.from(uniqueCollaborators.values());
     },
 
     async removeCollaborator(sessionId: string, ownerId: string, userId: string): Promise<void> {
