@@ -73,6 +73,8 @@ export const authService: AuthService = {
     async signInWithGoogle(): Promise<User> {
         try {
             const result = await signInWithPopup(auth, googleProvider);
+            // Initialize credits for new users
+            await creditsService.initializeCredits(result.user.uid);
             return result.user;
         } catch (error) {
             console.error("Error signing in with Google:", error);
@@ -172,6 +174,9 @@ export const authService: AuthService = {
             console.log("Creating Firebase Auth account for:", data.email);
             const result = await createUserWithEmailAndPassword(auth, data.email, data.password);
 
+            // Initialize credits for new user
+            await creditsService.initializeCredits(result.user.uid);
+
             // Delete pending registration
             await deleteDoc(pendingReg.ref);
 
@@ -186,6 +191,8 @@ export const authService: AuthService = {
     async signInWithEmail(email: string, password: string): Promise<User> {
         try {
             const result = await signInWithEmailAndPassword(auth, email, password);
+            // Initialize credits for users who don't have them yet
+            await creditsService.initializeCredits(result.user.uid);
             return result.user;
         } catch (error: any) {
             console.error("Error signing in with email:", error);
@@ -892,6 +899,91 @@ export const friendService = {
         const snapshot2 = await getDocs(q2);
         for (const doc of snapshot2.docs) {
             await deleteDoc(doc.ref);
+        }
+    },
+};
+
+// ─── Credits Service ────────────────────────────────────────────────────
+
+export interface UserCredits {
+    credits_present: number;
+    created_at: Date;
+}
+
+export const creditsService = {
+    async initializeCredits(userId: string): Promise<void> {
+        try {
+            const creditsRef = doc(db, "credits", userId);
+            const creditsSnap = await getDoc(creditsRef);
+
+            // Only initialize if credits don't exist
+            if (!creditsSnap.exists()) {
+                await setDoc(creditsRef, {
+                    credits_present: 300,
+                    created_at: serverTimestamp(),
+                });
+                console.log("Credits initialized for user:", userId);
+            }
+        } catch (error) {
+            console.error("Error initializing credits:", error);
+            throw error;
+        }
+    },
+
+    async getCredits(userId: string): Promise<number> {
+        try {
+            const creditsRef = doc(db, "credits", userId);
+            const creditsSnap = await getDoc(creditsRef);
+
+            if (!creditsSnap.exists()) {
+                // Initialize credits if they don't exist
+                await this.initializeCredits(userId);
+                return 300;
+            }
+
+            const data = creditsSnap.data();
+            return data.credits_present || 0;
+        } catch (error) {
+            console.error("Error getting credits:", error);
+            return 0;
+        }
+    },
+
+    async updateCredits(userId: string, newCredits: number): Promise<void> {
+        try {
+            const creditsRef = doc(db, "credits", userId);
+            await updateDoc(creditsRef, {
+                credits_present: newCredits,
+            });
+        } catch (error) {
+            console.error("Error updating credits:", error);
+            throw error;
+        }
+    },
+
+    async deductCredits(userId: string, amount: number): Promise<boolean> {
+        try {
+            const currentCredits = await this.getCredits(userId);
+
+            if (currentCredits < amount) {
+                return false; // Not enough credits
+            }
+
+            await this.updateCredits(userId, currentCredits - amount);
+            return true;
+        } catch (error) {
+            console.error("Error deducting credits:", error);
+            return false;
+        }
+    },
+
+    async addCredits(userId: string, amount: number): Promise<void> {
+        try {
+            const currentCredits = await this.getCredits(userId);
+            await this.updateCredits(userId, currentCredits + amount);
+        } catch (error) {
+            console.error("Error adding credits:", error);
+            throw error;
         }
     },
 };

@@ -33,6 +33,18 @@ interface WebSocketData {
     files?: Record<string, string>;
 }
 
+const TOKENS_PER_CREDIT = 1000;
+const TOKENS_PER_IMAGE = 1500;
+const DEFAULT_OUTPUT_TOKENS = 500;
+
+function calculateCredits(params: { prompt: string; imagesCount: number }): number {
+    const inputTokens = Math.ceil(params.prompt.length / 4);
+    const imageTokens = params.imagesCount * TOKENS_PER_IMAGE;
+    const totalTokens = inputTokens + imageTokens + DEFAULT_OUTPUT_TOKENS;
+    const credits = Math.ceil(totalTokens / TOKENS_PER_CREDIT);
+    return Math.max(credits, 1);
+}
+
 export class AIChatPanel extends HTMLElement {
     private messages: Message[] = [];
     private messagesContainer: HTMLDivElement;
@@ -298,11 +310,11 @@ export class AIChatPanel extends HTMLElement {
         }
     }
 
-    private updateConnectionStatus(connected: boolean) {
+    private async updateConnectionStatus(connected: boolean) {
         if (connected) {
             this.connectionDot.className = `${style.connectionDot} ${style.connected}`;
-            this.sendButton.disabled = false;
-            this.inputField.disabled = false;
+            // Check credits before enabling input
+            await this.loadCredits();
         } else {
             this.connectionDot.className = `${style.connectionDot} ${style.disconnected}`;
             this.sendButton.disabled = true;
@@ -421,7 +433,7 @@ export class AIChatPanel extends HTMLElement {
         } else {
             this.currentMessage.content += data.content;
             if (this.currentContentElement) {
-                this.currentContentElement.textContent = this.currentMessage.content;
+                this.currentContentElement.innerHTML = this.formatMessageContent(this.currentMessage.content);
             }
         }
 
@@ -526,13 +538,12 @@ export class AIChatPanel extends HTMLElement {
             Logger.warn("No download URL found in complete message");
         }
 
-        // Re-enable processing
+        // Re-enable processing and check credits
         this.isProcessing = false;
-        this.sendButton.disabled = false;
-        this.inputField.disabled = false;
+        await this.loadCredits();
     }
 
-    private showError(data: WebSocketData) {
+    private async showError(data: WebSocketData) {
         this.removeTypingIndicator();
         this.removeAgentStatus();
         this.finalizeCurrentMessage();
@@ -544,8 +555,28 @@ export class AIChatPanel extends HTMLElement {
         });
 
         this.isProcessing = false;
-        this.sendButton.disabled = false;
-        this.inputField.disabled = false;
+
+        // Refund credits on error
+        try {
+            const { creditsService, auth } = await import("chili-core");
+            const user = auth.currentUser;
+            if (user) {
+                // Get the last message to calculate refund
+                const lastUserMessage = this.messages.filter((m) => m.role === "user").pop();
+                if (lastUserMessage) {
+                    const refundAmount = calculateCredits({
+                        prompt: lastUserMessage.content,
+                        imagesCount: lastUserMessage.content.includes("📎") ? 1 : 0,
+                    });
+                    await creditsService.addCredits(user.uid, refundAmount);
+                    console.log(`💳 Refunded ${refundAmount} credits due to error`);
+                }
+            }
+        } catch (error) {
+            console.error("Error refunding credits:", error);
+        }
+
+        await this.loadCredits();
     }
 
     private finalizeCurrentMessage() {
@@ -593,12 +624,22 @@ export class AIChatPanel extends HTMLElement {
             onclick: () => this.close(),
         }) as HTMLButtonElement;
 
+        // Create credits display element
+        const creditsDisplay = div({ className: style.creditsDisplay });
+        creditsDisplay.innerHTML = `
+            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="flex-shrink: 0;">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span class="${style.creditsValue}" id="ai-chat-credits-value">--</span>
+        `;
+
         const header = div(
             { className: style.chatHeader },
             div(
                 { className: style.headerLeft },
                 span({ className: style.copilotIcon, textContent: "\u2726" }),
                 div({ className: style.chatTitle, textContent: "CAD Copilot" }),
+                creditsDisplay,
             ),
             div({ className: style.headerActions }, this.connectionDot, closeBtn),
         );
@@ -618,6 +659,9 @@ export class AIChatPanel extends HTMLElement {
         });
 
         this.append(resizer, header, this.messagesContainer, inputContainer);
+
+        // Load credits after render
+        this.loadCredits();
     }
 
     private startResize(e: MouseEvent) {
@@ -665,6 +709,61 @@ export class AIChatPanel extends HTMLElement {
 
         if ((!prompt && !hasImage) || this.isProcessing) {
             console.log("❌ Validation failed - returning");
+            return;
+        }
+
+        // Check credits before sending
+        try {
+            const { creditsService, auth } = await import("chili-core");
+            const user = auth.currentUser;
+
+            if (!user) {
+                this.addMessage({
+                    role: "assistant",
+                    content: "❌ Please log in to use the AI Copilot.",
+                });
+                return;
+            }
+
+            const currentCredits = await creditsService.getCredits(user.uid);
+
+            // Calculate required credits
+            const requiredCredits = calculateCredits({
+                prompt: prompt,
+                imagesCount: hasImage ? 1 : 0,
+            });
+
+            console.log(`💳 Credits check: Current=${currentCredits}, Required=${requiredCredits}`);
+
+            if (currentCredits < requiredCredits) {
+                this.addMessage({
+                    role: "assistant",
+                    content: `❌ Insufficient credits. You need ${requiredCredits} credits but have ${currentCredits}. Please purchase more credits.`,
+                });
+                return;
+            }
+
+            // Deduct credits before sending
+            const deductSuccess = await creditsService.deductCredits(user.uid, requiredCredits);
+
+            if (!deductSuccess) {
+                this.addMessage({
+                    role: "assistant",
+                    content: "❌ Failed to deduct credits. Please try again.",
+                });
+                return;
+            }
+
+            console.log(`✅ Deducted ${requiredCredits} credits`);
+
+            // Update credits display
+            await this.loadCredits();
+        } catch (error) {
+            console.error("❌ Error checking/deducting credits:", error);
+            this.addMessage({
+                role: "assistant",
+                content: "❌ Error processing credits. Please try again.",
+            });
             return;
         }
 
@@ -992,6 +1091,25 @@ export class AIChatPanel extends HTMLElement {
         }
     }
 
+    private formatMessageContent(content: string): string {
+        // Convert markdown-style formatting to HTML
+        let formatted = content;
+
+        // Convert **bold** to <strong>
+        formatted = formatted.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+
+        // Convert line breaks to <br>
+        formatted = formatted.replace(/\n/g, "<br>");
+
+        // Convert numbered lists (e.g., "1. Item" or "**1. Item**")
+        formatted = formatted.replace(/^(\d+)\.\s+/gm, "<br><strong>$1.</strong> ");
+
+        // Convert bullet points
+        formatted = formatted.replace(/^[-*]\s+/gm, "<br>• ");
+
+        return formatted;
+    }
+
     private createMessageElement(message: Message): HTMLDivElement {
         const row = div({ className: style.messageRow });
 
@@ -1028,7 +1146,13 @@ export class AIChatPanel extends HTMLElement {
         } else {
             contentEl.classList.add(style.assistantMessage);
         }
-        contentEl.textContent = message.content;
+
+        // Use innerHTML for assistant messages to support formatting
+        if (message.role === "assistant" || message.role === "tool") {
+            contentEl.innerHTML = this.formatMessageContent(message.content);
+        } else {
+            contentEl.textContent = message.content;
+        }
 
         contentWrapper.appendChild(senderName);
         contentWrapper.appendChild(contentEl);
@@ -1068,6 +1192,51 @@ export class AIChatPanel extends HTMLElement {
             this.ws = null;
         }
         this.remove();
+    }
+
+    private async loadCredits(): Promise<void> {
+        try {
+            const { creditsService, auth } = await import("chili-core");
+            const user = auth.currentUser;
+
+            if (!user) {
+                Logger.warn("No user logged in for credits display");
+                const creditsValueEl = document.getElementById("ai-chat-credits-value");
+                if (creditsValueEl) {
+                    creditsValueEl.textContent = "--";
+                }
+                return;
+            }
+
+            const credits = await creditsService.getCredits(user.uid);
+            const creditsValueEl = document.getElementById("ai-chat-credits-value");
+
+            if (creditsValueEl) {
+                creditsValueEl.textContent = credits.toString();
+            }
+
+            // Disable input if no credits
+            if (credits === 0) {
+                this.inputField.disabled = true;
+                this.sendButton.disabled = true;
+                this.imageUploadButton.disabled = true;
+                this.inputField.placeholder = "No credits available. Please purchase more credits.";
+            } else {
+                // Only enable if not processing and connected
+                if (!this.isProcessing && this.wsConnected) {
+                    this.inputField.disabled = false;
+                    this.sendButton.disabled = false;
+                    this.imageUploadButton.disabled = false;
+                    this.inputField.placeholder = "Ask Copilot...";
+                }
+            }
+        } catch (error) {
+            Logger.error("Error loading credits in AI chat:", error);
+            const creditsValueEl = document.getElementById("ai-chat-credits-value");
+            if (creditsValueEl) {
+                creditsValueEl.textContent = "0";
+            }
+        }
     }
 
     // Cleanup on disconnect

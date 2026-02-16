@@ -60,6 +60,31 @@
     letter-spacing: 0.3px;
 }
 
+.creditsDisplay {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background: rgba(16, 185, 129, 0.12);
+    border: 1px solid rgba(16, 185, 129, 0.25);
+    border-radius: 12px;
+    margin-left: 12px;
+}
+
+.creditsDisplay svg {
+    color: #10b981;
+    flex-shrink: 0;
+}
+
+.creditsValue {
+    font-size: 12px;
+    font-weight: 600;
+    color: #10b981;
+    line-height: 1;
+    min-width: 20px;
+    text-align: center;
+}
+
 .headerActions {
     display: flex;
     align-items: center;
@@ -234,6 +259,22 @@
     color: #cccccc;
     word-wrap: break-word;
     white-space: pre-wrap;
+}
+
+.messageContent strong {
+    font-weight: 600;
+    color: #e0e0e0;
+}
+
+.messageContent br {
+    display: block;
+    content: "";
+    margin: 0.4em 0;
+}
+
+.messageContent br + strong {
+    display: inline-block;
+    margin-top: 0.5em;
 }
 
 /* Legacy .message kept for compatibility */
