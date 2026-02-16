@@ -50,6 +50,10 @@ export class AIChatPanel extends HTMLElement {
     private agentStatusElement: HTMLDivElement | null = null;
     private modelTypeSelect: HTMLSelectElement;
     private modelType: string = "openai";
+    private imageUploadButton: HTMLButtonElement;
+    private imageInput: HTMLInputElement;
+    private selectedImage: File | null = null;
+    private imagePreviewContainer: HTMLDivElement | null = null;
 
     constructor(
         private readonly app: IApplication,
@@ -90,6 +94,21 @@ export class AIChatPanel extends HTMLElement {
             this.modelType = (e.target as HTMLSelectElement).value;
         });
 
+        // Create hidden file input for image upload
+        this.imageInput = document.createElement("input");
+        this.imageInput.type = "file";
+        this.imageInput.accept = "image/*";
+        this.imageInput.style.display = "none";
+        this.imageInput.addEventListener("change", (e) => this.handleImageSelect(e));
+
+        // Create image upload button
+        this.imageUploadButton = button({
+            className: style.imageUploadButton,
+            textContent: "📎",
+            title: "Attach Image",
+            onclick: () => this.imageInput.click(),
+        }) as HTMLButtonElement;
+
         this.connectionDot = div({ className: style.connectionDot });
 
         this.render();
@@ -97,6 +116,81 @@ export class AIChatPanel extends HTMLElement {
         // Don't connect WebSocket here — the session ID may not be available yet
         // (Editor is created during app build, before the router navigates to /editor?sessionId=xxx).
         // Connection will be established when the chat panel is shown via ensureConnection().
+    }
+
+    private handleImageSelect(event: Event) {
+        console.log("=== handleImageSelect called ===");
+        const input = event.target as HTMLInputElement;
+        console.log("Input files:", input.files);
+        if (input.files && input.files[0]) {
+            this.selectedImage = input.files[0];
+            console.log(
+                "Selected image set to:",
+                this.selectedImage.name,
+                this.selectedImage.type,
+                this.selectedImage.size,
+            );
+            this.showImagePreview(this.selectedImage);
+        }
+    }
+
+    private showImagePreview(file: File) {
+        // Remove existing preview container if any (but don't clear selectedImage)
+        if (this.imagePreviewContainer) {
+            this.imagePreviewContainer.remove();
+            this.imagePreviewContainer = null;
+        }
+
+        // Create preview container
+        this.imagePreviewContainer = div({ className: style.imagePreview });
+
+        // Create image element
+        const img = document.createElement("img");
+        img.className = style.previewImage;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            img.src = e.target?.result as string;
+        };
+        reader.readAsDataURL(file);
+
+        // Create remove button
+        const removeBtn = button({
+            className: style.removeImageButton,
+            textContent: "✕",
+            onclick: () => this.removeImagePreview(),
+        }) as HTMLButtonElement;
+
+        this.imagePreviewContainer.appendChild(img);
+        this.imagePreviewContainer.appendChild(removeBtn);
+
+        // Insert preview before input field
+        const inputWrapper = this.querySelector(`.${style.inputWrapper}`) as HTMLElement;
+        if (inputWrapper) {
+            inputWrapper.insertBefore(this.imagePreviewContainer, this.inputField);
+        }
+    }
+
+    private removeImagePreview() {
+        console.log("=== removeImagePreview called ===");
+        if (this.imagePreviewContainer) {
+            this.imagePreviewContainer.remove();
+            this.imagePreviewContainer = null;
+        }
+        this.selectedImage = null;
+        this.imageInput.value = "";
+        console.log("Image preview removed, selectedImage set to null");
+    }
+
+    private async convertImageToBase64(file: File): Promise<string> {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+                const base64 = (reader.result as string).split(",")[1];
+                resolve(base64);
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+        });
     }
 
     /**
@@ -164,7 +258,7 @@ export class AIChatPanel extends HTMLElement {
     }
 
     private connectWebSocket() {
-        const wsUrl = `wss://venus-215301763138.europe-west1.run.app/ws/chat/${this.sessionId}`;
+        const wsUrl = `ws://127.0.0.1:8000/ws/chat/${this.sessionId}`;
         Logger.info("Connecting to WebSocket:", wsUrl);
 
         try {
@@ -186,10 +280,7 @@ export class AIChatPanel extends HTMLElement {
 
             this.ws.onerror = (error) => {
                 Logger.error("WebSocket error:", error);
-                this.addMessage({
-                    role: "assistant",
-                    content: "",
-                });
+                // Don't add empty messages on error
             };
 
             this.ws.onmessage = (event) => {
@@ -307,6 +398,11 @@ export class AIChatPanel extends HTMLElement {
     private appendTextChunk(data: WebSocketData) {
         this.removeTypingIndicator();
         this.removeAgentStatus();
+
+        // Don't create messages with empty or undefined content
+        if (!data.content) {
+            return;
+        }
 
         if (!this.currentMessage || !this.currentMessageElement) {
             this.currentMessage = {
@@ -507,7 +603,12 @@ export class AIChatPanel extends HTMLElement {
             div({ className: style.headerActions }, this.connectionDot, closeBtn),
         );
 
-        const inputWrapper = div({ className: style.inputWrapper }, this.modelTypeSelect, this.inputField);
+        const inputWrapper = div(
+            { className: style.inputWrapper },
+            this.modelTypeSelect,
+            this.inputField,
+            this.imageUploadButton,
+        );
 
         const inputContainer = div({ className: style.chatInput }, inputWrapper, this.sendButton);
 
@@ -553,30 +654,63 @@ export class AIChatPanel extends HTMLElement {
         });
     }
 
-    private handleSendMessage() {
+    private async handleSendMessage() {
+        console.log("=== handleSendMessage START ===");
+        console.log("this.selectedImage:", this.selectedImage);
+        console.log("this.inputField.value:", this.inputField.value);
+        console.log("this.isProcessing:", this.isProcessing);
+
         const prompt = this.inputField.value.trim();
-        if (!prompt || this.isProcessing) return;
+        const hasImage = this.selectedImage !== null;
+
+        if ((!prompt && !hasImage) || this.isProcessing) {
+            console.log("❌ Validation failed - returning");
+            return;
+        }
 
         // Ensure we're connected with the correct session ID before sending
         this.ensureConnection();
 
-        if (!this.wsConnected) return;
+        if (!this.wsConnected) {
+            console.log("❌ WebSocket not connected - returning");
+            return;
+        }
 
+        // IMPORTANT: Capture these BEFORE clearing anything
+        const messageToSend = prompt;
+        const imageToSend = this.selectedImage;
+
+        console.log("✅ Captured for sending:");
+        console.log("  - messageToSend:", messageToSend);
+        console.log(
+            "  - imageToSend:",
+            imageToSend ? `${imageToSend.name} (${imageToSend.size} bytes)` : "null",
+        );
+
+        // Now set processing state and clear UI
         this.isProcessing = true;
         this.sendButton.disabled = true;
         this.inputField.disabled = true;
         this.inputField.value = "";
         this.inputField.style.height = "40px";
 
-        // Add user message
-        this.addMessage({ role: "user", content: prompt });
+        // Add user message to UI
+        const displayMessage = imageToSend ? `${prompt || "Image attached"} 📎` : prompt;
+        this.addMessage({ role: "user", content: displayMessage });
 
         // Send via WebSocket
-        this.sendWebSocketMessage(prompt);
+        console.log("📤 Calling sendWebSocketMessage...");
+        await this.sendWebSocketMessage(messageToSend, imageToSend);
+        console.log("=== handleSendMessage END ===");
     }
 
-    private sendWebSocketMessage(message: string) {
+    private async sendWebSocketMessage(message: string, imageFile: File | null = null) {
+        console.log("=== sendWebSocketMessage START ===");
+        console.log("  - message:", message);
+        console.log("  - imageFile:", imageFile ? `${imageFile.name} (${imageFile.size} bytes)` : "null");
+
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            console.log("❌ WebSocket not open");
             this.addMessage({
                 role: "assistant",
                 content: "❌ Not connected to server. Reconnecting...",
@@ -587,17 +721,65 @@ export class AIChatPanel extends HTMLElement {
             return;
         }
 
-        const data = {
+        // Build the data object with the required format
+        const data: Record<string, unknown> = {
             message: message,
             uid: this.uid,
+            type: "user_message", // Default type
+            image: null, // Always include image field
             model_type: this.modelType,
-            type: "user_message",
         };
 
+        // If image is provided, convert to base64 and update type
+        if (imageFile) {
+            try {
+                console.log("🖼️ Converting image to base64...");
+                const base64Image = await this.convertImageToBase64(imageFile);
+                console.log("✅ Image converted, length:", base64Image.length);
+
+                // Store as data URL or base64 string based on your backend needs
+                data.image = base64Image; // You can change this to a URL if needed
+                data.image_type = imageFile.type;
+
+                // Set type based on whether there's both image and text
+                if (message && message.trim().length > 0) {
+                    data.type = "both";
+                    console.log("📝 Type set to: both (image + text)");
+                } else {
+                    data.type = "image";
+                    console.log("📝 Type set to: image (only)");
+                }
+
+                // Remove the preview after preparing the data
+                this.removeImagePreview();
+            } catch (error) {
+                console.error("❌ Error converting image:", error);
+                Logger.error("Error converting image:", error);
+                this.addMessage({
+                    role: "assistant",
+                    content: `❌ Error processing image: ${error instanceof Error ? error.message : "Unknown error"}`,
+                });
+                this.isProcessing = false;
+                this.sendButton.disabled = false;
+                this.inputField.disabled = false;
+                return;
+            }
+        } else {
+            console.log("📝 Type set to: user_message (text only, no image)");
+        }
+
         try {
-            this.ws.send(JSON.stringify(data));
-            Logger.info("Sent message:", data);
+            console.log("=== Preparing to send ===");
+            console.log("📤 Request data:", JSON.stringify(data, null, 2));
+
+            const jsonString = JSON.stringify(data);
+            console.log("  - JSON length:", jsonString.length);
+
+            this.ws.send(jsonString);
+            console.log("✅ WebSocket message sent successfully!");
+            Logger.info("Sent message with type:", data.type);
         } catch (error) {
+            console.error("❌ Error sending message:", error);
             Logger.error("Error sending message:", error);
             this.addMessage({
                 role: "assistant",
@@ -607,6 +789,8 @@ export class AIChatPanel extends HTMLElement {
             this.sendButton.disabled = false;
             this.inputField.disabled = false;
         }
+
+        console.log("=== sendWebSocketMessage END ===");
     }
 
     private showQuestionForm(questions: Question[]) {
@@ -691,7 +875,7 @@ export class AIChatPanel extends HTMLElement {
         const submitButton = button({
             className: style.submitAnswersButton,
             textContent: "Submit Answers",
-            onclick: () => {
+            onclick: async () => {
                 // Collect all answers
                 const answers: string[] = [];
                 questions.forEach((_q, index) => {
@@ -718,7 +902,7 @@ export class AIChatPanel extends HTMLElement {
                 this.sendButton.style.display = "";
 
                 // Send answers via WebSocket
-                this.sendWebSocketMessage(answersText);
+                await this.sendWebSocketMessage(answersText);
             },
         }) as HTMLButtonElement;
 
@@ -855,6 +1039,12 @@ export class AIChatPanel extends HTMLElement {
     }
 
     private addMessage(message: Message) {
+        // Don't add messages with empty content (except for loading/typing indicators)
+        if (!message.content && message.role !== "loading" && message.role !== "typing") {
+            console.warn("Attempted to add message with empty content, skipping:", message);
+            return;
+        }
+
         this.messages.push(message);
         const messageEl = this.createMessageElement(message);
         this.messagesContainer.appendChild(messageEl);
