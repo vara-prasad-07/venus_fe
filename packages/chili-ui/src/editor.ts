@@ -26,7 +26,29 @@ import { RibbonTabData } from "./ribbon/ribbonData";
 import { Statusbar } from "./statusbar";
 import { LayoutViewport } from "./viewport";
 
-const quickCommands: CommandKeys[] = ["doc.save", "doc.saveToFile", "edit.undo", "edit.redo"];
+const allQuickCommands: CommandKeys[] = [
+    "doc.save",
+    "doc.saveToFile",
+    "doc.saveToCloud",
+    "edit.undo",
+    "edit.redo",
+];
+
+// Filter quick commands based on user permission
+function getFilteredQuickCommands(): CommandKeys[] {
+    const userPermission = localStorage.getItem("currentUserPermission");
+    console.log("[Editor] Filtering quick commands, permission:", userPermission);
+    if (userPermission === "viewer") {
+        // Remove all save commands for viewers
+        const filtered = allQuickCommands.filter(
+            (cmd) => cmd !== "doc.save" && cmd !== "doc.saveToFile" && cmd !== "doc.saveToCloud",
+        );
+        console.log("[Editor] Viewer detected, filtered commands:", filtered);
+        return filtered;
+    }
+    console.log("[Editor] Editor/Owner, showing all commands:", allQuickCommands);
+    return allQuickCommands;
+}
 
 export class Editor extends HTMLElement {
     readonly ribbonContent: RibbonDataContent;
@@ -47,6 +69,7 @@ export class Editor extends HTMLElement {
         tabs: RibbonTab[],
     ) {
         super();
+        const quickCommands = getFilteredQuickCommands();
         this.ribbonContent = new RibbonDataContent(app, quickCommands, tabs.map(RibbonTabData.fromProfile));
         const viewport = new LayoutViewport(app);
         viewport.classList.add(style.viewport);
@@ -316,6 +339,15 @@ export class Editor extends HTMLElement {
         const tab = this.ribbonContent.ribbonTabs.find((p) => p.tabName === tabName);
         const group = tab?.groups.find((p) => p.groupName === groupName);
         group?.items.push(command);
+    }
+
+    refreshQuickCommands() {
+        // Clear existing quick commands
+        this.ribbonContent.quickCommands.clear();
+        // Re-add filtered commands based on current permission
+        const filtered = getFilteredQuickCommands();
+        console.log("[Editor] Refreshing quick commands with:", filtered);
+        this.ribbonContent.quickCommands.push(...filtered);
     }
 
     private readonly _toggleSidebar = () => {
