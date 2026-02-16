@@ -258,7 +258,7 @@ export class AIChatPanel extends HTMLElement {
     }
 
     private connectWebSocket() {
-        const wsUrl = `ws://127.0.0.1:8000/ws/chat/${this.sessionId}`;
+        const wsUrl = `wss://venus-215301763138.europe-west1.run.app/ws/chat/${this.sessionId}`;
         Logger.info("Connecting to WebSocket:", wsUrl);
 
         try {
