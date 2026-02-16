@@ -1206,7 +1206,20 @@ async function loadNotificationsDialog(): Promise<void> {
         });
 
         // Get project invitations
-        const projectInvitations = await shareService.getProjectInvitations();
+        const allProjectInvitations = await shareService.getProjectInvitations();
+
+        // Remove duplicate project invitations (keep most recent per project)
+        const uniqueInvitationsMap = new Map<string, any>();
+        for (const inv of allProjectInvitations) {
+            const existing = uniqueInvitationsMap.get(inv.projectId);
+            const invTime = inv.createdAt?.toMillis?.() || 0;
+            const existingTime = existing?.createdAt?.toMillis?.() || 0;
+
+            if (!existing || invTime > existingTime) {
+                uniqueInvitationsMap.set(inv.projectId, inv);
+            }
+        }
+        const projectInvitations = Array.from(uniqueInvitationsMap.values());
 
         const notificationsList = document.getElementById("notifications-list");
         if (!notificationsList) return;
@@ -1264,6 +1277,9 @@ async function loadNotificationsDialog(): Promise<void> {
 
             // Add Access Requests
             for (const request of accessRequests) {
+                const roleLabel = request.requestedRole === "viewer" ? "Viewer" : "Editor";
+                const roleColor = request.requestedRole === "viewer" ? "#3b82f6" : "#10b981";
+
                 const notificationCard = document.createElement("div");
                 notificationCard.style.cssText = `
                     background: rgba(168, 85, 247, 0.1);
@@ -1280,14 +1296,14 @@ async function loadNotificationsDialog(): Promise<void> {
                         <div style="flex: 1;">
                             <div style="color: white; font-weight: 600; margin-bottom: 4px;">Project Access Request</div>
                             <div style="color: rgba(255, 255, 255, 0.8); font-size: 14px; margin-bottom: 8px;">
-                                <strong>${escapeHtml(request.requesterName)}</strong> (${escapeHtml(request.requesterEmail)}) wants access to your project
+                                <strong>${escapeHtml(request.requesterName)}</strong> (${escapeHtml(request.requesterEmail)}) wants <span style="color: ${roleColor}; font-weight: 600;">${roleLabel}</span> access to your project
                             </div>
                             ${request.message ? `<div style="color: #888; font-size: 13px; margin-bottom: 8px; font-style: italic;">"${escapeHtml(request.message)}"</div>` : ""}
                             <div style="color: #888; font-size: 12px; margin-bottom: 12px;">
                                 ${formatTimeAgo(request.requestedAt)}
                             </div>
                             <div style="display: flex; gap: 8px;">
-                                <button class="approve-access-btn" data-request-id="${request.id}" style="padding: 8px 16px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500;">Approve</button>
+                                <button class="approve-access-btn" data-request-id="${request.id}" style="padding: 8px 16px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500;">Approve as ${roleLabel}</button>
                                 <button class="reject-access-btn" data-request-id="${request.id}" style="padding: 8px 16px; background: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500;">Reject</button>
                             </div>
                         </div>
@@ -1368,7 +1384,7 @@ async function loadNotificationsDialog(): Promise<void> {
                     const requestId = (e.target as HTMLElement).getAttribute("data-request-id");
                     if (!requestId) return;
                     try {
-                        await accessRequestService.approveRequest(requestId, "editor");
+                        await accessRequestService.approveRequest(requestId);
                         loadNotificationsDialog();
                         updateNotificationBadge();
 
@@ -1833,6 +1849,7 @@ async function createNewProject(router: IRouter): Promise<void> {
         localStorage.setItem("currentSessionId", project.sessionId);
         localStorage.setItem("currentProjectName", project.projectName);
         localStorage.setItem("currentProjectOwnerId", project.userId);
+        localStorage.setItem("currentUserPermission", "owner"); // Creator is owner
         router.navigate(`/editor?sessionId=${project.sessionId}`);
     } catch (error) {
         console.error("Failed to create project:", error);
@@ -2256,6 +2273,7 @@ function createProjectCard(project: any, router: IRouter, showDelete: boolean): 
         localStorage.setItem("currentSessionId", project.sessionId);
         localStorage.setItem("currentProjectName", project.projectName);
         localStorage.setItem("currentProjectOwnerId", project.userId);
+        localStorage.setItem("currentUserPermission", "owner"); // Owner has full permissions
         router.navigate(`/editor?sessionId=${project.sessionId}`);
     });
 
@@ -2331,6 +2349,7 @@ function createSharedProjectCard(share: any, router: IRouter): HTMLElement {
         localStorage.setItem("currentSessionId", share.projectId);
         localStorage.setItem("currentProjectName", projectName);
         localStorage.setItem("currentProjectOwnerId", share.sharedBy);
+        localStorage.setItem("currentUserPermission", share.permission); // Set user's permission level
         router.navigate(`/editor?sessionId=${share.projectId}&owner=${share.sharedBy}`);
     });
 
