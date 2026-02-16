@@ -179,7 +179,7 @@ export async function renderRequestAccess(router: IRouter): Promise<void> {
                 );
             }
 
-            await accessRequestService.requestAccess(sessionId, ownerId, message || undefined);
+            await accessRequestService.requestAccess(sessionId, ownerId, "editor", message || undefined);
 
             statusMessage.style.display = "block";
             statusMessage.style.background = "rgba(16, 185, 129, 0.1)";
