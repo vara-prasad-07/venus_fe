@@ -10,16 +10,16 @@ Venus is a next-generation browser-based 3D CAD platform that revolutionizes col
 LIVE Link: https://venuscad.pages.dev/
 ### Key Features
 
-- **🤖 AI CAD Copilot**: AI Copilot for CAD desing based on user prompt or sketch
-- **👥 Real-time Collaboration**: Work simultaneously with team members on 3D models
-- **☁️ Cloud Storage**: Automatic project sync via Cloudinary with version control
-- **📊 GitHub-Style History**: Track every change with detailed commit-style version history
-- **🏢 Team Management**: Create teams, manage members, and organize projects
-- **🎨 Complete CAD Toolset**: Professional modeling, editing, and analysis tools
-- **📁 Import/Export**: Support for industry-standard formats (STEP, IGES, BREP)
-- **🎭 Parametric Variations**: Create design variations with parametric modeling
-- **⚡ WebAssembly Performance**: Near-native speed using OpenCascade compiled to WASM
-- **🎨 Modern UI**: Clean, professional interface with glassmorphic design
+- ** AI CAD Copilot**: AI Copilot for CAD desing based on user prompt or sketch
+- ** Real-time Collaboration**: Work simultaneously with team members on 3D models
+- ** Cloud Storage**: Automatic project sync via Cloudinary with version control
+- ** GitHub-Style History**: Track every change with detailed commit-style version history
+- ** Team Management**: Create teams, manage members, and organize projects
+- ** Complete CAD Toolset**: Professional modeling, editing, and analysis tools
+- ** Import/Export**: Support for industry-standard formats (STEP, IGES, BREP)
+- ** Parametric Variations**: Create design variations with parametric modeling
+- ** WebAssembly Performance**: Near-native speed using OpenCascade compiled to WASM
+- ** Modern UI**: Clean, professional interface with glassmorphic design
 
 ## Technology Stack
 
