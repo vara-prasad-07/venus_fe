@@ -10,7 +10,8 @@ Venus is a next-generation browser-based 3D CAD platform that revolutionizes col
 LIVE Link: https://venuscad.pages.dev/
 
 ### Screenshot
-<img width="1918" height="985" alt="image" src="https://github.com/user-attachments/assets/efb5b74a-b28b-44e0-a663-eded259957fb" />
+<img width="1917" height="1008" alt="image" src="https://github.com/user-attachments/assets/1ceabf08-3a12-4b0f-b05f-2bb0ecbaff96" />
+
 
 
 
